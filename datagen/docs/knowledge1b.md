@@ -400,7 +400,7 @@ free.
 
 ## Sources on disk
 
-Upstream, all under `/Users/neelnanda/Code/maths-pretrain/`:
+Upstream, all in the private build repo (paths relative to its root):
 
 - `build_knowledge.py` — the original five-family SPARQL harvest,
   `add_pageviews`, `verify_articles`, and the ten shots.

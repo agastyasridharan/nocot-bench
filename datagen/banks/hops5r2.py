@@ -59,7 +59,7 @@ NOT the shipped items. Concretely:
 ================================================================================
 THE SHIPPED PIPELINE  (described faithfully; NOT reproduced here)
 ================================================================================
-Source: /Users/neelnanda/Code/maths-pretrain/scratch_hops5/ (build_hops5.py,
+Source: the private build repo, scratch_hops5/ (build_hops5.py,
 wdwalk.py, gen_pool.py/gen_pool_aug.py, filter_kill.py, screens.py, screen_r.py,
 make_bank5_final.py), governed by results/report/HOPS5_PREDECLARATION.md and the
 binding 2026-08-20 amendment. Recorded non-regenerable in

@@ -534,7 +534,7 @@ battery (`--force` only to inspect a broken run).
 
 ## Sources on disk
 
-Upstream, all under `/Users/neelnanda/Code/maths-pretrain/`:
+Upstream, all in the private build repo (paths relative to its root):
 
 - `scratch_courtcase/{families,sources,net,build,harvest}.py` — the family
   definitions, the answer-shape contract, the taste filter, the three

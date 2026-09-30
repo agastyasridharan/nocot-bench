@@ -371,7 +371,7 @@ part and a re-run against the cache is free.
 
 ## Sources on disk
 
-Upstream, all under `/Users/neelnanda/Code/maths-pretrain/`:
+Upstream, all in the private build repo (paths relative to its root):
 
 - `build_knowledge4d.py` — the whole shipped pipeline: `harvest_s2`,
   `s2_prefilter`, `parse_arxiv_xml`, `build_candidates` (the twelve reasons),
