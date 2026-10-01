@@ -243,7 +243,7 @@ def main():
         for l in open(args.out):
             r = json.loads(l)
             if r.get("status") == "ok":
-                done.add((r["pair_id"], r["arm"]))
+                done.add((r["pair_id"], "kl" if r["arm"] == "sl" else r["arm"]))   # pre-rename logs say "sl"
     todo = [r for r in evals if (r["pair_id"], r["arm"]) not in done]
     random.Random(args.seed).shuffle(todo)                   # interleave arms and cells
     print(f"{args.model} effort={args.effort}: {len(todo)} calls ({len(done)} done)", flush=True)

@@ -1,8 +1,9 @@
 import json,sys,gzip
 _open=lambda p: gzip.open(p,"rt") if p.endswith(".gz") else open(p)
 from scipy import stats
-a={(r['pair_id'],r['arm']):r for r in map(json.loads,_open(sys.argv[1]))}
-b={(r['pair_id'],r['arm']):r for r in map(json.loads,_open(sys.argv[2]))}
+arm=lambda r: 'kl' if r['arm']=='sl' else r['arm']   # pre-rename logs say "sl"
+a={(r['pair_id'],arm(r)):r for r in map(json.loads,_open(sys.argv[1]))}
+b={(r['pair_id'],arm(r)):r for r in map(json.loads,_open(sys.argv[2]))}
 ks=sorted(set(a)&set(b))
 ya=[int(a[k]['correct'] and a[k]['valid']) for k in ks]; yb=[int(b[k]['correct'] and b[k]['valid']) for k in ks]
 n10=sum(x and not y for x,y in zip(ya,yb)); n01=sum(y and not x for x,y in zip(ya,yb))
