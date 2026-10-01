@@ -705,7 +705,7 @@ def render_md(args):
     print("wrote", args.render_md)
 
 
-def main(argv=None):
+def build_parser():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", required=True, choices=sorted(MODELS))
     ap.add_argument("--model-path", default=None, help="local snapshot dir instead of repo@revision")
@@ -741,6 +741,11 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="tokenizer only: render + tries, no engine")
     ap.add_argument("--fake-engine", action="store_true", help="with --dry-run: run the row pipeline on CPU")
     ap.add_argument("--render-md", default=None)
+    return ap
+
+
+def main(argv=None):
+    ap = build_parser()
     args = ap.parse_args(argv)
     if args.lp_prefix is None:
         args.lp_prefix = MODELS[args.model]["lp_prefix"]

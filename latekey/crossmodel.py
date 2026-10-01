@@ -75,11 +75,11 @@ def fit_cross(tab, pids_w, c, dm, start=None):
     data = b.agg()
     if start is None:
         grid = [[mu, lb, 0.0, 0.0] for mu in np.percentile(b.pctl, [25, 50, 75, 90]) for lb in (-1.0, 0.0, 1.0)]
-        th0, _ = SS.fit("null", data, c, grid, dm)
+        th0, _ = SS.fit("null", data, c, grid, dm=dm)
         starts = grid + [th0]
     else:
         starts = [start]
-    th, _ = SS.fit("both", data, c, starts, dm)
+    th, _ = SS.fit("both", data, c, starts, dm=dm)
     kf, kl = SS.crossings(th)
     return kf, kl, th
 
