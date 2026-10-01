@@ -42,9 +42,14 @@ EXCLUDE = {"rulebook"}
 ORDER = ["brew", "chain", "chainbig", "ordertrack", "cfgpatch", "progpred_loop", "progpred_unrolled",
          "shortpath", "soundchange", "rulebook", "objpass", "routing", "boxpush"]
 MODELS = {"null": [0, 1], "shift": [0, 1, 2], "scale": [0, 1, 3], "both": [0, 1, 2, 3]}
-# theta = [mu, log beta, Delta, log r]
-BOUNDS = [(-30.0, 80.0), (-5.0, 4.0), (-40.0, 40.0), (-2.5, 2.5)]
-BASE = np.array([0.0, 0.0, 0.0, 0.0])
+# theta = [mu, log beta, Delta, log r, logit c]. The floor c is fixed at chance unless --free-floor,
+# in which case it is one free parameter per bank, shared by both arms (the plateau check).
+BOUNDS = [(-30.0, 80.0), (-5.0, 4.0), (-40.0, 40.0), (-2.5, 2.5), (-7.0, 3.0)]
+FREE_FLOOR = False
+# "both" is optimised in centred coordinates: Delta_m replaces Delta, with
+#   key-last logit = beta (mu - Delta_m - r (d - d_m) - d_m),   so   Delta = Delta_m + d_m (1 - r).
+# Delta_m is the key-last gap (in key-first steps) at the bank's median depth d_m; anchoring there
+# instead of at d = 0 removes most of the Delta-r correlation. The MLE is the same either way.
 
 
 # ---------------------------------------------------------------- data
@@ -63,6 +68,7 @@ class Bank:
         ind = (self.depth[None, :] == self.d[:, None]).astype(float)       # D x T
         self.A_n, self.A_kf, self.A_kl = ind, ind * self.ykf, ind * self.ykl
         self.pctl = np.repeat(self.depth, self.count.astype(int))
+        self.dm = float(np.median(self.pctl)) if len(self.pctl) else 0.0     # centring depth d_m
 
     def agg(self, w=None):
         w = self.count if w is None else w
@@ -77,7 +83,7 @@ def bank_from_pairs(name, chance, pairs, n_incomplete=0, writeup=None):
                 [cnt[k] for k in keys], n_incomplete=n_incomplete, writeup=writeup)
 
 
-def load_runs(paths, drop_invalid):
+def load_runs(paths, drop_invalid, relative_split=True):
     sys.path.insert(0, HERE)
     from analyze import load, unit, pairs_of                     # same loading rules as the write-up
     rows = load(paths, drop_invalid)
@@ -94,7 +100,28 @@ def load_runs(paths, drop_invalid):
         n_inc = len({r["pair_id"] for r in main}) - len(P)
         pairs = [(v["kf"]["dependent_depth"], v["kf"]["y"], v["kl"]["y"]) for v in P.values()]
         banks.append(bank_from_pairs(name, float(rs[0]["chance"]), pairs, n_incomplete=n_inc))
+        if name == "ordertrack" and relative_split:
+            banks += ordertrack_relative_split(P, float(rs[0]["chance"]))
     return banks
+
+
+def ordertrack_relative_split(P, chance):
+    """Split ordertrack pairs by the share of RELATIVE edits (n_relative_edits / nominal depth):
+    above 1/2 -> relhi, below -> rello, exactly 1/2 -> assigned by a hash of the pair id (balanced,
+    and independent of the outcome). The two halves are disjoint, so their bootstraps are independent."""
+    import hashlib
+    halves = {"ordertrack_relhi": [], "ordertrack_rello": []}
+    for pid, v in P.items():
+        r = v["kf"]
+        f = float(r.get("n_relative_edits") or 0) / max(1, r["nominal_depth"])
+        hi = f > 0.5 if f != 0.5 else int(hashlib.sha1(pid.encode()).hexdigest(), 16) % 2 == 0
+        halves["ordertrack_relhi" if hi else "ordertrack_rello"].append((r["dependent_depth"], v["kf"]["y"], v["kl"]["y"]))
+    out = []
+    for nm, pairs in halves.items():
+        b = bank_from_pairs(nm, chance, pairs)
+        b.aux = True                      # a split of a bank already in the pool: not pooled
+        out.append(b)
+    return out
 
 
 def load_results_json(path):
@@ -150,82 +177,123 @@ def _arm_terms(z, k, n, c):
     ll = np.sum(k * lp + (n - k) * l1p)
     # d ll / dz:  k (1-c) s (1-s) / p  -  (n-k) s
     g = k * np.exp(math.log1p(-c) + log_expit(z) + log_expit(-z) - lp) - (n - k) * expit(z)
-    return ll, g
+    # d ll / dc:  k (1-s) / p  -  (n-k) / (1-c)
+    gc = np.sum(k * np.exp(log_expit(-z) - lp)) - np.sum(n - k) / (1 - c)
+    return ll, g, gc
 
 
-def loglik(theta, data, c, grad=False):
+def loglik(theta, data, c=None, grad=False):
+    """theta = [mu, log beta, Delta, log r, logit c]; the floor is read from theta[4]."""
     d, k_kf, n_kf, k_kl, n_kl = data
-    mu, lb, D, lr = theta
-    beta, r = math.exp(lb), math.exp(lr)
+    mu, lb, D, lr, lc = theta
+    beta, r, c = math.exp(lb), math.exp(lr), float(expit(lc))
     z_kf = beta * (mu - d)
     z_kl = beta * (mu - D - r * d)
-    l1, g1 = _arm_terms(z_kf, k_kf, n_kf, c)
-    l2, g2 = _arm_terms(z_kl, k_kl, n_kl, c)
+    l1, g1, c1 = _arm_terms(z_kf, k_kf, n_kf, c)
+    l2, g2, c2 = _arm_terms(z_kl, k_kl, n_kl, c)
     if not grad:
         return l1 + l2
     G = np.array([beta * (g1.sum() + g2.sum()),
                   np.sum(g1 * z_kf) + np.sum(g2 * z_kl),
                   -beta * g2.sum(),
-                  -beta * r * np.sum(g2 * d)])
+                  -beta * r * np.sum(g2 * d),
+                  (c1 + c2) * c * (1 - c)])
     return l1 + l2, G
 
 
-def fit(model, data, c, starts):
-    free = MODELS[model]
+def _full(s, c):
+    s = np.asarray(s, float)
+    return s.copy() if len(s) == 5 else np.r_[s, logit(c)]
+
+
+def fit(model, data, c, starts, dm=0.0, free_floor=None):
+    """Maximise the likelihood of one model. `c` is the chance floor (the fixed value, or the
+    lower start for a free floor). Returns theta in uncentred coordinates [mu, lb, Delta, lr, lc]."""
+    free_floor = FREE_FLOOR if free_floor is None else free_floor
+    free = MODELS[model] + ([4] if free_floor else [])
+    base = np.array([0.0, 0.0, 0.0, 0.0, logit(c)])
+    centred = 2 in free and 3 in free
+    i2 = free.index(2) if centred else None
+
+    def to_th(x):
+        th = base.copy(); th[free] = x
+        if centred:                                    # x holds Delta_m in the Delta slot
+            th[2] = x[i2] + dm * (1 - math.exp(th[3]))
+        return th
 
     def f(x):
-        th = BASE.copy(); th[free] = x
-        ll, g = loglik(th, data, c, grad=True)
+        th = to_th(x)
+        ll, g = loglik(th, data, grad=True)
+        if centred:                                    # chain rule through Delta(Delta_m, log r)
+            g = g.copy(); g[3] += g[2] * (-dm * math.exp(th[3]))
         return -ll, -g[free]
+    lo, hi = [BOUNDS[i][0] for i in free], [BOUNDS[i][1] for i in free]
     best = None
     for s in starts:
-        x0 = np.clip(np.asarray(s, float)[free], [BOUNDS[i][0] for i in free], [BOUNDS[i][1] for i in free])
-        res = optimize.minimize(f, x0, jac=True, method="L-BFGS-B", bounds=[BOUNDS[i] for i in free])
+        th0 = _full(s, c)
+        if centred:
+            th0[2] = th0[2] - dm * (1 - math.exp(th0[3]))
+        x0 = np.clip(th0[free], lo, hi)
+        res = optimize.minimize(f, x0, jac=True, method="L-BFGS-B", bounds=list(zip(lo, hi)))
         if np.isfinite(res.fun) and (best is None or res.fun < best.fun):
             best = res
-    th = BASE.copy(); th[free] = best.x
-    return th, -best.fun
+    return to_th(best.x), -best.fun
 
 
-def crossings(th, c):
+def crossings(th, c=None):
     mu, beta, D, r = th[0], math.exp(th[1]), th[2], math.exp(th[3])
+    c = float(expit(th[4]))
+    if c >= 0.5:
+        return float("nan"), float("nan")
     zs = logit((0.5 - c) / (1 - c))
     kf = mu - zs / beta
     kl = (mu - D - zs / beta) / r
     return kf, kl
 
 
-def describe(th, ll, model, c):
-    kf, kl = crossings(th, c)
-    k = len(MODELS[model])
-    return dict(mu=th[0], beta=math.exp(th[1]), Delta=th[2], r=math.exp(th[3]), LL=ll, k=k, AIC=2 * k - 2 * ll,
+def describe(th, ll, model, c, dm=0.0, free_floor=None):
+    free_floor = FREE_FLOOR if free_floor is None else free_floor
+    kf, kl = crossings(th)
+    k = len(MODELS[model]) + int(free_floor)
+    r = math.exp(th[3])
+    return dict(mu=th[0], beta=math.exp(th[1]), Delta=th[2], r=r, Delta_m=th[2] - dm * (1 - r), d_m=dm,
+                floor=float(expit(th[4])), LL=ll, k=k, AIC=2 * k - 2 * ll,
                 cross_kf=kf, cross_kl=kl, gap=kf - kl, ratio=kf / kl if kl > 0 else float("nan"))
 
 
 def fit_point(bank):
-    data, c = bank.agg(), bank.c
-    grid = [[mu, lb, 0.0, 0.0] for mu in np.percentile(bank.pctl, [25, 50, 75, 90]) for lb in (-1.0, 0.0, 1.0)]
+    data, c, dm = bank.agg(), bank.c, bank.dm
+    floors = [logit(c)]
+    if FREE_FLOOR:                                     # also start from the deepest observed accuracy
+        d, kk, nk, ks, ns = data
+        deep = float((kk[-1] + ks[-1]) / (nk[-1] + ns[-1]))
+        floors += [logit(min(0.9, max(c + 0.02, deep - 0.05)))]
+    grid = [[mu, lb, 0.0, 0.0, lc] for mu in np.percentile(bank.pctl, [25, 50, 75, 90])
+            for lb in (-1.0, 0.0, 1.0) for lc in floors]
     th, ll = {}, {}
-    th["null"], ll["null"] = fit("null", data, c, grid)
+    th["null"], ll["null"] = fit("null", data, c, grid, dm)
     for m in ("shift", "scale"):
-        th[m], ll[m] = fit(m, data, c, grid + [th["null"]])
-    th["both"], ll["both"] = fit("both", data, c, grid + [th["null"], th["shift"], th["scale"]])
+        th[m], ll[m] = fit(m, data, c, grid + [th["null"]], dm)
+    th["both"], ll["both"] = fit("both", data, c, grid + [th["null"], th["shift"], th["scale"]], dm)
     return th, ll
 
 
 def fit_boot(bank, w, th0):
-    data, c = bank.agg(w), bank.c
+    data, c, dm = bank.agg(w), bank.c, bank.dm
     proj_s = th0["both"].copy(); proj_s[3] = 0.0
     proj_r = th0["both"].copy(); proj_r[2] = 0.0
-    ts, ls = fit("shift", data, c, [th0["shift"], proj_s])
-    tr, lr_ = fit("scale", data, c, [th0["scale"], proj_r])
-    tb, lb = fit("both", data, c, [th0["both"], ts, tr])
-    xb = crossings(tb, c)
-    return [ls - lr_, ts[2], math.exp(tr[3]), tb[2], math.exp(tb[3]), lb - ls, lb - lr_, xb[0], xb[1], xb[0] - xb[1]]
+    ts, ls = fit("shift", data, c, [th0["shift"], proj_s], dm)
+    tr, lr_ = fit("scale", data, c, [th0["scale"], proj_r], dm)
+    tb, lb = fit("both", data, c, [th0["both"], ts, tr], dm)
+    xb = crossings(tb)
+    rb = math.exp(tb[3])
+    return [ls - lr_, ts[2], math.exp(tr[3]), tb[2], rb, lb - ls, lb - lr_, xb[0], xb[1], xb[0] - xb[1],
+            tb[2] - dm * (1 - rb), float(expit(tb[4])), xb[0] / xb[1] if xb[1] > 0 else float("nan")]
 
 
 BOOT_KEYS = ["shift_minus_scale", "Delta_shift", "r_scale", "Delta_both", "r_both",
-             "both_minus_shift", "both_minus_scale", "cross_kf_both", "cross_kl_both", "gap_both"]
+             "both_minus_shift", "both_minus_scale", "cross_kf_both", "cross_kl_both", "gap_both",
+             "Delta_m_both", "floor_both", "ratio_both"]
 
 
 def emp_logit(k, n, c):
@@ -243,12 +311,16 @@ def ci(v):
 
 def analyse_bank(args):
     bank, B, seed = args
+    global FREE_FLOOR                     # worker processes re-import the module (spawn), so carry it on the bank
+    FREE_FLOOR = getattr(bank, "free_floor", FREE_FLOOR)
     th, ll = fit_point(bank)
     out = dict(unit=bank.name, chance=bank.c, n_pairs=bank.n_pairs, n_pairs_omitted=bank.n_omitted,
-               n_pairs_incomplete_dropped=bank.n_incomplete, writeup_crossing=bank.writeup,
-               models={m: describe(th[m], ll[m], m, bank.c) for m in MODELS})
+               n_pairs_incomplete_dropped=bank.n_incomplete, writeup_crossing=bank.writeup, d_m=bank.dm,
+               free_floor=FREE_FLOOR, models={m: describe(th[m], ll[m], m, bank.c, bank.dm) for m in MODELS})
     if hasattr(bank, "truth"):
         out["truth"] = bank.truth
+    if getattr(bank, "aux", False):
+        out["aux"] = True
     lrt = {}
     for small, big in (("null", "shift"), ("null", "scale"), ("shift", "both"), ("scale", "both")):
         s = max(0.0, 2 * (ll[big] - ll[small]))
@@ -268,6 +340,12 @@ def analyse_bank(args):
     out["shift_vs_scale"] = dict(diff=ll["shift"] - ll["scale"], ci=ci(draws[:, 0]),
                                  p_shift_better=float(np.mean(draws[:, 0] > 0)))
     out["boot_ci"] = {k: ci(draws[:, i]) for i, k in enumerate(BOOT_KEYS) if k != "shift_minus_scale"}
+    # joint (Delta, r) correlation in the bootstrap: anchored at d = 0 vs centred at d_m
+    def corr(a, b):
+        a, b = draws[:, BOOT_KEYS.index(a)], draws[:, BOOT_KEYS.index(b)]
+        ok = np.isfinite(a) & np.isfinite(b)
+        return float(np.corrcoef(a[ok], b[ok])[0, 1]) if ok.sum() > 2 and a[ok].std() > 0 and b[ok].std() > 0 else float("nan")
+    out["boot_corr"] = dict(Delta0_r=corr("Delta_both", "r_both"), Delta_m_r=corr("Delta_m_both", "r_both"))
     # diagnostic table: empirical floor-adjusted logits per depth, with the fitted shift / scale logits
     d, k_kf, n_kf, k_kl, n_kl = bank.agg()
     zs = {m: (math.exp(th[m][1]) * (th[m][0] - d),
@@ -408,6 +486,7 @@ KF_COL, KL_COL = "#2a6fdb", "#d9480f"
 
 
 def _acc(m, d, c, arm):
+    c = m.get("floor", c)
     z = m["beta"] * (m["mu"] - d) if arm == "kf" else m["beta"] * (m["mu"] - m["Delta"] - m["r"] * d)
     return c + (1 - c) * expit(z)
 
@@ -578,7 +657,7 @@ def run(banks, B, seed, workers):
     for u in units:
         print(f"done {u['unit']:18s} Δll={u['shift_vs_scale']['diff']:+.2f} {fci(u['shift_vs_scale']['ci'])} "
               f"P(shift)={u['shift_vs_scale']['p_shift_better']:.2f}", file=sys.stderr)
-    return units, pooled(units, B)
+    return units, pooled([u for u in units if not u.get("aux")], B)
 
 
 def main():
@@ -592,7 +671,13 @@ def main():
     ap.add_argument("--workers", type=int, default=os.cpu_count() or 1)
     ap.add_argument("--simulate", action="store_true", help="run the recovery check on synthetic banks")
     ap.add_argument("--keep-draws", action="store_true", help="keep per-resample draws in the JSON")
+    ap.add_argument("--free-floor", action="store_true",
+                    help="plateau check: one free floor per bank, shared by both arms, instead of chance")
+    ap.add_argument("--no-relative-split", action="store_true", help="skip the ordertrack relative-edit split")
     a = ap.parse_args()
+    global FREE_FLOOR
+    FREE_FLOOR = a.free_floor
+    ff = "__freefloor" if a.free_floor else ""
     out_dir = os.path.join(HERE, "results")
     res = {"B": a.B, "seed": a.seed}
     if a.simulate:
@@ -602,7 +687,7 @@ def main():
                    source="synthetic banks: floor 0.2, mu 8, beta 0.9, depths 1-14, 80 pairs/depth; "
                           "sim_null (Δ 0, r 1), sim_shift (Δ 1.5), sim_scale (r 1.3)")
     elif a.runs:
-        banks = load_runs(a.runs, a.drop_invalid)
+        banks = load_runs(a.runs, a.drop_invalid, relative_split=not a.no_relative_split)
         suffix = a.tag + ("__dropinv" if a.drop_invalid else "")
         res.update(tag=suffix, source="raw runs " + ", ".join(os.path.basename(p) for p in a.runs),
                    n_incomplete_pairs_dropped={b.name: b.n_incomplete for b in banks})
@@ -621,16 +706,29 @@ def main():
                               + ", ".join(f"{k} {v}" for k, v in om.items() if v) + "). "
                               f"Incomplete pairs dropped: {sum(inc.values())} (per-arm row counts match at every depth). "
                               "Re-run with `--runs` on the raw files to include every pair."))
-    print(f"[data] {len(banks)} banks, {sum(b.n_pairs for b in banks)} pairs", file=sys.stderr)
+    suffix += ff
+    for b in banks:
+        b.free_floor = a.free_floor
+    res["free_floor"] = a.free_floor
+    print(f"[data] {len(banks)} banks, {sum(b.n_pairs for b in banks if not getattr(b, 'aux', False))} pairs"
+          f"{' (free floor)' if a.free_floor else ''}", file=sys.stderr)
     units, pool_ = run(banks, a.B, a.seed, a.workers)
+    res["aux_units"] = [u for u in units if u.get("aux")]
+    units = [u for u in units if not u.get("aux")]
     res["units"], res["pooled"] = units, pool_
     md = report(res)
+    extra = centred_section(units) + relative_section(res["aux_units"], units)
+    if a.free_floor:
+        fixed = os.path.join(out_dir, f"shift_scale__{suffix[:-len(ff)]}.json")
+        extra += plateau_section(units, fixed)
+    md = md.replace("## Log-likelihoods and likelihood-ratio tests", extra + "## Log-likelihoods and likelihood-ratio tests", 1)
     if a.simulate:
         md += "\n" + validation_summary(units)
     figdir = os.path.join(out_dir, "figs", f"shift_scale__{suffix}")
     paths = plots(res, figdir, suffix)
+    paths.append(scatter_plot(units, os.path.join(out_dir, "figs", f"shift_scale_joint__{suffix}.png"), suffix))
     if not a.keep_draws:
-        for u in units:
+        for u in units + res["aux_units"]:
             u.pop("boot_draws", None)
     jp = os.path.join(out_dir, f"shift_scale__{suffix}.json")
     json.dump(res, open(jp, "w"), indent=1, default=float)
@@ -638,6 +736,107 @@ def main():
     open(mp, "w").write(md)
     print(md.split("## Log-likelihoods")[0])
     print(jp, mp, *paths, sep="\n")
+
+
+def centred_section(U):
+    L = ["## Centred parameterisation (§0.1)", "",
+         "Key-last logit `beta (mu - Delta_m - r (d - d_m) - d_m)`, with `d_m` the bank's median dependent depth "
+         "over pairs. `Delta_m` is the key-last gap, in key-first steps, at `d_m`; `r` is the slope ratio. "
+         "Same MLE as the `both` model (`Delta = Delta_m + d_m (1 - r)`). The last two columns are the bootstrap "
+         "correlation of r with the d = 0 intercept Delta and with Delta_m. Joint scatter: `figs/shift_scale_joint__<tag>.png`.", "",
+         "| bank | d_m | Delta_m [CI] | r [CI] | Delta at d=0 [CI] | corr(Delta, r) | corr(Delta_m, r) |", "|---|---|---|---|---|---|---|"]
+    for u in U:
+        m, b, c = u["models"]["both"], u["boot_ci"], u["boot_corr"]
+        L.append(f"| {u['unit']} | {u['d_m']:g} | {m['Delta_m']:+.2f} {fci(b['Delta_m_both'])} | {m['r']:.3f} {fci(b['r_both'], 3)} | "
+                 f"{m['Delta']:+.2f} {fci(b['Delta_both'])} | {c['Delta0_r']:+.2f} | {c['Delta_m_r']:+.2f} |")
+    return "\n".join(L) + "\n\n"
+
+
+def relative_section(aux, U):
+    if not aux:
+        return ""
+    A = {u["unit"]: u for u in aux}
+    hi, lo = A.get("ordertrack_relhi"), A.get("ordertrack_rello")
+    if not (hi and lo):
+        return ""
+    L = ["## Ordertrack: relative vs absolute edits (§0.3)", "",
+         "Ordertrack pairs split by the share of relative edits (`n_relative_edits / nominal depth`): above 1/2 → "
+         "rel-heavy, below → rel-light, exactly 1/2 → split by a hash of the pair id. The halves are disjoint, so "
+         "the CI of a difference comes from independent bootstraps. Prediction under test: relative edits lean "
+         "toward **scale** (a per-step cost, r > 1) rather than a constant shift.", "",
+         "| half | n pairs | d_m | LL(shift) − LL(scale) [CI] | P(shift better) | Delta_m [CI] | r [CI] | kf / kl crossing | reading |",
+         "|---|---|---|---|---|---|---|---|---|"]
+    for u in (hi, lo):
+        m, b, sv = u["models"]["both"], u["boot_ci"], u["shift_vs_scale"]
+        L.append(f"| {u['unit'].split('_')[1]} | {u['n_pairs']} | {u['d_m']:g} | {sv['diff']:+.2f} {fci(sv['ci'])} | "
+                 f"{sv['p_shift_better']:.3f} | {m['Delta_m']:+.2f} {fci(b['Delta_m_both'])} | {m['r']:.3f} {fci(b['r_both'], 3)} | "
+                 f"{f2(m['cross_kf'])} / {f2(m['cross_kl'])} | {u['reading']} |")
+    dh, dl = hi["boot_draws"], lo["boot_draws"]
+    rows = []
+    for key, lab in (("shift_minus_scale", "LL(shift) − LL(scale)"), ("r_both", "r"), ("Delta_m_both", "Delta_m"),
+                     ("gap_both", "crossing gap kf − kl")):
+        a, b = np.array(dh[key]), np.array(dl[key])
+        point = ((hi["shift_vs_scale"]["diff"] - lo["shift_vs_scale"]["diff"]) if key == "shift_minus_scale" else
+                 (hi["models"]["both"][{"r_both": "r", "Delta_m_both": "Delta_m", "gap_both": "gap"}[key]]
+                  - lo["models"]["both"][{"r_both": "r", "Delta_m_both": "Delta_m", "gap_both": "gap"}[key]]))
+        rows.append(f"| {lab} | {point:+.3f} | {fci(ci(a - b), 3)} | {float(np.mean((a - b) > 0)):.3f} |")
+    L += ["", "Difference, rel-heavy minus rel-light:", "", "| quantity | diff | 95% CI | P(diff > 0) |", "|---|---|---|---|"] + rows
+    return "\n".join(L) + "\n\n"
+
+
+def plateau_section(U, fixed_path):
+    L = ["## Plateau check: free floor (§0.2)", "",
+         "Each bank's floor `c` is a free parameter shared by both arms (bounded to [0.001, 0.95]) instead of the "
+         "fixed chance floor. Verdicts below compare this fit with the fixed-floor run of the same data.", ""]
+    if not os.path.exists(fixed_path):
+        return "\n".join(L + [f"(fixed-floor results {os.path.basename(fixed_path)} not found; run without --free-floor first)", "", ""])
+    F = {u["unit"]: u for u in json.load(open(fixed_path))["units"]}
+    L += ["| bank | chance | free floor (both) [CI] | LL gain vs fixed (both) | LL(shift) − LL(scale): fixed → free | reading: fixed | reading: free | survives? | kf / kl crossing: fixed → free |",
+          "|---|---|---|---|---|---|---|---|---|"]
+    n_same = 0
+    for u in U:
+        f = F.get(u["unit"])
+        if not f:
+            continue
+        mb, fb = u["models"]["both"], f["models"]["both"]
+        v_fixed, v_free = f["reading"].split(" (")[0].split(";")[0], u["reading"].split(" (")[0].split(";")[0]
+        same = v_fixed == v_free
+        n_same += same
+        L.append(f"| {u['unit']} | {u['chance']:.3f} | {mb['floor']:.3f} {fci(u['boot_ci']['floor_both'], 3)} | "
+                 f"{mb['LL'] - fb['LL']:+.2f} | {f['shift_vs_scale']['diff']:+.2f} → {u['shift_vs_scale']['diff']:+.2f} {fci(u['shift_vs_scale']['ci'])} | "
+                 f"{f['reading']} | {u['reading']} | {'yes' if same else '**no**'} | "
+                 f"{f2(fb['cross_kf'])} / {f2(fb['cross_kl'])} → {f2(mb['cross_kf'])} / {f2(mb['cross_kl'])} |")
+    L += ["", f"Verdict class (shift / scale / mixed / can't distinguish) unchanged in {n_same} of {len(U)} banks. "
+          "LL gain is the improvement of the `both` model from freeing the floor (one extra parameter; "
+          "2 × gain is a rough χ²₁ statistic, bounded below at c → 0).", "", ""]
+    return "\n".join(L)
+
+
+def scatter_plot(U, path, tag):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    cols = 4
+    rws = (len(U) + cols - 1) // cols
+    fig, axes = plt.subplots(rws, cols, figsize=(4.2 * cols, 3.3 * rws), squeeze=False)
+    for ax in list(axes.flat)[len(U):]:
+        ax.axis("off")
+    for ax, u in zip(axes.flat, U):
+        d = u["boot_draws"]
+        r, dm, d0 = np.array(d["r_both"]), np.array(d["Delta_m_both"]), np.array(d["Delta_both"])
+        ax.scatter(d0, r, s=2, alpha=0.25, color="#999", label=f"Δ at d=0 (ρ={u['boot_corr']['Delta0_r']:+.2f})")
+        ax.scatter(dm, r, s=2, alpha=0.35, color=KL_COL, label=f"Δ_m at d={u['d_m']:g} (ρ={u['boot_corr']['Delta_m_r']:+.2f})")
+        ax.axhline(1, color="k", lw=0.5)
+        ax.axvline(0, color="k", lw=0.5)
+        ax.set_title(u["unit"], fontsize=10)
+        ax.set_xlabel("Δ (key-first steps)")
+        ax.set_ylabel("r")
+        ax.legend(fontsize=7, markerscale=4, loc="best")
+    fig.suptitle(f"Joint bootstrap of (Δ, r), both model: {tag}", fontsize=12)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return path
 
 
 def validation_summary(units):
