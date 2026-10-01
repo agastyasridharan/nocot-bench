@@ -6,7 +6,7 @@ Models (key-last logit; key-first is `beta (mu - d)` in all four): null `beta (m
 
 **Data note.** The raw runs are not in the repository, so pairs were rebuilt from the per-depth 2×2 counts in the results JSON. That rebuild is exact except that analyze.py leaves depths with < 10 pairs out of `cells`; those pairs are missing here (56 of 12050 sweep pairs: chainbig 18, ordertrack 5, progpred_loop 1, shortpath 2, soundchange 10, objpass 13, boxpush 7). Incomplete pairs dropped: 0 (per-arm row counts match at every depth). Re-run with `--runs` on the raw files to include every pair.
 
-## Pooled across banks
+## Pooled across banks (floor fixed)
 
 **Summed LL(shift) − LL(scale) = -3.28, 95% CI [-16.73, 9.94], P(shift better) = 0.302** over 12 banks (2000/2000 resamples usable).
 
@@ -29,7 +29,31 @@ Leave one bank out:
 | routing | -6.41 | [-19.49, 6.98] | 0.171 |
 | boxpush | -3.86 | [-17.33, 9.48] | 0.275 |
 
-## Shift vs. scale per bank
+## Robustness to the floor
+
+Each fit is repeated with the floor c estimated (one floor shared by both arms) instead of fixed at the nominal chance floor. The fit columns compare the 'both' model with a perfect per-(arm, depth) fit: a deviance far above its df means the model does not fit. A verdict is **robust** only if its 95% CI excludes 0 on the same side under both floors. An estimated floor ≥ 0.5 means the curve never reaches 50%, so no crossing is reported, and an estimated floor far below the lowest observed accuracy is an extrapolation.
+
+Pooled, floor estimated: **-28.05, 95% CI [-41.48, -14.56], P(shift better) = 0.000** (fixed floor: -3.28 [-16.73, 9.94]). Leave one bank out, floor estimated: brew -27.3 [-40.8, -13.6]; chain -27.9 [-41.8, -14.8]; chainbig -25.7 [-39.3, -12.3]; ordertrack -23.0 [-35.8, -10.3]; cfgpatch -24.3 [-36.1, -11.7]; progpred_loop -28.2 [-41.8, -14.7]; progpred_unrolled -24.2 [-37.7, -10.8]; shortpath -28.6 [-42.2, -14.9]; soundchange -16.3 [-26.0, -6.1]; objpass -26.0 [-39.7, -12.3]; routing -27.4 [-40.5, -14.0]; boxpush -29.5 [-43.1, -16.3].
+
+| bank | floor, fixed | floor, estimated (shift) [CI] | lowest observed accuracy | fit, fixed floor: dev/df (p) | fit, estimated floor: dev/df (p) | LL gain from estimating the floor (shift) | LL(shift) − LL(scale), fixed [CI] | LL(shift) − LL(scale), estimated [CI] | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| brew | 0.113 | 0.111 [0.075, 0.149] | 0.10 | 7/8 (0.57) | 7/7 (0.46) | +0.0 | -0.74 [-2.12, 0.46] | -0.74 [-2.12, 0.46] | leans scale under both floors, not significant under both |
+| chain | 0.109 | 0.166 [0.131, 0.198] | 0.10 | 33/18 (0.016) | 19/17 (0.34) | +7.5 | -0.56 [-3.69, 2.51] | -0.10 [-2.75, 2.70] | leans scale under both floors, not significant under both |
+| chainbig | 0.025 | 0.029 [0.017, 0.042] | 0.00 | 27/14 (0.021) | 26/13 (0.015) | +0.2 | -2.37 [-4.68, -0.53] | -2.35 [-4.60, -0.52] | scale (robust) |
+| ordertrack | 0.095 | 0.548 [0.413, 0.635] | 0.49 | 53/18 (<1e-4) | 21/17 (0.23) | +11.0 | +5.88 [1.24, 10.04] | -5.10 [-10.14, 0.25] | floor-sensitive (fixed +5.88, estimated -5.10) |
+| cfgpatch | 0.021 | 0.002 [0.000, 0.034] | 0.02 | 19/12 (0.095) | 18/11 (0.074) | +0.6 | -4.24 [-10.12, 1.91] | -3.75 [-9.99, 2.15] | leans scale under both floors, not significant under both |
+| progpred_loop | 0.035 | 0.185 [0.154, 0.214] | 0.13 | 238/8 (<1e-4) | 11/7 (0.15) | +117.5 | -1.57 [-3.46, -0.14] | +0.17 [-0.17, 0.65] | floor-sensitive (fixed -1.57, estimated +0.17) |
+| progpred_unrolled | 0.035 | 0.107 [0.077, 0.137] | 0.05 | 58/8 (<1e-4) | 18/7 (0.014) | +20.8 | -4.35 [-8.10, -0.65] | -3.82 [-7.07, -0.79] | scale (robust) |
+| shortpath | 0.061 | 0.313 [0.000, 0.478] | 0.46 | 13/8 (0.13) | 10/7 (0.17) | +1.4 | +1.24 [-0.38, 3.09] | +0.52 [-1.40, 2.48] | leans shift under both floors, not significant under both |
+| soundchange | 0.002 | 0.135 [0.007, 0.238] | 0.00 | 72/32 (<1e-4) | 51/31 (0.014) | +2.2 | +1.47 [-7.27, 9.85] | -11.70 [-21.49, -2.34] | floor-sensitive (fixed +1.47, estimated -11.70) |
+| objpass | 0.167 | 0.241 [0.159, 0.315] | 0.08 | 42/20 (0.0024) | 37/19 (0.0075) | +2.2 | -1.75 [-4.76, 0.87] | -2.01 [-4.70, 0.49] | leans scale under both floors, not significant under both |
+| routing | 0.200 | 0.538 [0.504, 0.575] | 0.40 | 190/14 (<1e-4) | 23/13 (0.042) | +83.5 | +3.13 [0.28, 6.12] | -0.62 [-2.29, 0.88] | floor-sensitive (fixed +3.13, estimated -0.62) |
+| boxpush | 0.073 | 0.235 [0.180, 0.285] | 0.10 | 85/26 (<1e-4) | 34/25 (0.11) | +25.4 | +0.58 [-1.57, 2.78] | +1.45 [-0.08, 3.43] | leans shift under both floors, not significant under both |
+
+Estimated-floor parameters: brew Δ 0.54 [0.39, 0.69], r 1.115 [1.082, 1.149]; chain Δ 1.16 [0.93, 1.40], r 1.235 [1.185, 1.287]; chainbig Δ 0.59 [0.44, 0.73], r 1.145 [1.107, 1.185]; ordertrack Δ 3.24 [2.44, 4.01], r 1.687 [1.527, 1.852]; cfgpatch Δ 2.68 [2.37, 3.01], r 1.368 [1.317, 1.426]; progpred_loop Δ 0.14 [0.03, 0.27], r 1.049 [1.008, 1.092]; progpred_unrolled Δ 0.84 [0.67, 1.00], r 1.278 [1.219, 1.337]; shortpath Δ 0.81 [0.55, 1.11], r 1.181 [1.113, 1.269]; soundchange Δ 7.04 [6.13, 7.98], r 2.168 [1.957, 2.441]; objpass Δ 0.94 [0.54, 1.31], r 1.226 [1.140, 1.316]; routing Δ 0.87 [0.54, 1.18], r 1.252 [1.152, 1.357]; boxpush Δ 0.72 [0.41, 1.06], r 1.155 [1.073, 1.250].
+
+
+## Shift vs. scale per bank (floor fixed)
 
 LL(shift) − LL(scale) > 0 favours shift. Same parameter count, so log-likelihoods compare directly. CIs are 95% pair-bootstrap percentiles (the primary uncertainty measure).
 
