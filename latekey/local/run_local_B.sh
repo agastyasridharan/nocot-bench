@@ -6,7 +6,8 @@
 #   bash latekey/local/run_local_B.sh flash  pilot   # DeepSeek-V4-Flash-0731, TP=2 (+EP)
 #   bash latekey/local/run_local_B.sh flash  main    # needs latekey/sel_B/main_flash.txt
 #   LP=0 bash ... qwen pilot|main                   # skip in-line log-prob scoring; then
-#   bash latekey/local/run_local_B.sh qwen   lp      # log-prob-only pass -> runs_B/lp__<label>.jsonl
+#   LPMAX=50 bash latekey/local/run_local_B.sh qwen lp   # log-prob-only pass -> runs_B/lp__<label>.jsonl (50 pairs/cell)
+#   LPSEL=latekey/sel_B/pilot_local.txt bash latekey/local/run_local_B.sh flash lp  # re-score Flash pilot (bare prefix)
 # (Don't overwrite this file while a run is executing it: bash reads scripts incrementally.)
 #
 # Run inside tmux, one session per model (latekey_qwen / latekey_flash). Sessions run one at a time:
