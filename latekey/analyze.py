@@ -131,10 +131,14 @@ def analyse_unit(name, rows, ctrl_rows, chance, rng):
     by = collections.defaultdict(list)
     for p in pids:
         by[P[p]["kf"]["dependent_depth"]].append(p)
-    cells = []
+    cells, cells_small = [], []
     for d in sorted(by):
         ps = by[d]
-        if len(ps) < 10:
+        if len(ps) < 10:                 # too few to test or plot; keep the paired counts so the JSON is complete
+            cells_small.append(dict(dep=d, n=len(ps), acc_kf=float(np.mean([P[p]["kf"]["y"] for p in ps])),
+                                    acc_kl=float(np.mean([P[p]["kl"]["y"] for p in ps])),
+                                    kf_only=sum(1 for p in ps if P[p]["kf"]["y"] and not P[p]["kl"]["y"]),
+                                    kl_only=sum(1 for p in ps if P[p]["kl"]["y"] and not P[p]["kf"]["y"])))
             continue
         kf = np.mean([P[p]["kf"]["y"] for p in ps])
         kl = np.mean([P[p]["kl"]["y"] for p in ps])
@@ -154,6 +158,7 @@ def analyse_unit(name, rows, ctrl_rows, chance, rng):
     for c_, padj in zip(cells, holm([c["p"] for c in cells])):
         c_["p_holm"] = padj
     out["cells"] = cells
+    out["cells_small"] = cells_small                        # depths with < 10 pairs: counts only, not in cells
     # ---- primary: logit with pair-clustered SEs
     X, y, arm, d = design(rs, "dependent_depth")
     groups = np.array([pids.index(r["pair_id"]) for r in rs])
