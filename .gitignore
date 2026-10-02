@@ -21,6 +21,10 @@ venv/
 # os
 .DS_Store
 
+# Local regeneration and analysis scratch files.
+work/
+latekey/data_all/
+
 # gpqa ships as a manifest, not as text (author-gated upstream).
 # `python -m nocot.fetch_gpqa` rebuilds and byte-verifies it.
 data/ncri/gpqa.jsonl
