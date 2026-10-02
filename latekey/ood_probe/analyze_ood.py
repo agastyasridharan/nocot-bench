@@ -123,7 +123,7 @@ def main():
             L.append(line(summ([v for v in allp if v["kf"]["family"] == fam and v["kf"]["depth_cell"] == dc],
                                f"{fam} · {dc}")))
 
-    L += ["\n## Per cell (Holm over 24 cells)\n", hdr[:-1] + " Holm p |", "|---|---|---|---|---|---|---|---|"]
+    L += ["\n## Per cell (Holm over 24 cells)\n", hdr + " Holm p |", "|---|---|---|---|---|---|---|---|"]
     cells = sorted({(v["kf"]["unit"], v["kf"]["depth_cell"]) for v in allp})
     cs = [summ([v for v in allp if (v["kf"]["unit"], v["kf"]["depth_cell"]) == c], f"{c[0]} · {c[1]}") for c in cells]
     hp = holm([s["p"] for s in cs])

@@ -13,7 +13,5 @@ python-dotenv>=1.0.0
 #     python -m nocot.tests.test_smoke
 pytest>=7.0
 
-# latekey/ (the late-key serial-depth study) additionally needs numpy, scipy,
-# statsmodels and matplotlib. Its token counts (trailing_span_tokens) depend on
-# the tiktoken version, so pin it to reproduce the committed data:
-tiktoken==0.14.0
+# For the latekey study, install its separate dependency list:
+# python -m pip install -r latekey/requirements.txt

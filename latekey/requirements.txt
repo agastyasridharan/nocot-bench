@@ -1,0 +1,8 @@
+# Dependencies for the key-position study. Run from the repository root:
+# python -m pip install -r latekey/requirements.txt
+numpy
+scipy
+statsmodels
+matplotlib
+# This version is needed to reproduce the committed token counts.
+tiktoken==0.14.0
