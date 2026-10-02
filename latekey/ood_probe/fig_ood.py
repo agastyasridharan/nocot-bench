@@ -8,6 +8,7 @@ the same probes asked alone (no problem). Above each group: key-last − key-fir
     python latekey/ood_probe/fig_ood.py   # -> latekey/results/figs/ood_probe.{png,pdf}
 """
 import glob
+import gzip
 import json
 import os
 import sys
@@ -27,6 +28,13 @@ INK, INK2, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 B = 4000
 
 
+def read_jsonl(path):
+    """Rows of a run file; falls back to the committed .gz copy when the plain file is absent."""
+    if not os.path.exists(path) and os.path.exists(path + ".gz"):
+        return [json.loads(l) for l in gzip.open(path + ".gz", "rt")]
+    return [json.loads(l) for l in open(path)]
+
+
 def ok(r):
     return bool(r.get("status") == "ok" and r.get("correct") and r.get("valid"))
 
@@ -39,10 +47,9 @@ def main():
             if r["split"] == "eval":
                 cell[r["pair_id"]] = r["depth_cell"]
     P = {}
-    for l in open(os.path.join(HERE, "runs", "redirect__gpt-6.1-sol.jsonl")):
-        r = json.loads(l)
+    for r in read_jsonl(os.path.join(HERE, "runs", "redirect__gpt-6.1-sol.jsonl")):
         P.setdefault(r["pair_id"], {})[r["arm"]] = int(ok(r))
-    alone = [ok(json.loads(l)) for l in open(os.path.join(HERE, "runs", "alone__gpt-6.1-sol.jsonl"))]
+    alone = [ok(r) for r in read_jsonl(os.path.join(HERE, "runs", "alone__gpt-6.1-sol.jsonl"))]
     groups = [("One step", "d1"), ("Deep", "deep"), ("All", None)]
     rng = np.random.default_rng(0)
     stats = []
