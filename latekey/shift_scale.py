@@ -783,8 +783,12 @@ def main():
                     help="per-depth key-ignorant floors {bank: {depth: floor}}; adds a third floor to the robust reading")
     ap.add_argument("--floor-bias-sim", type=int, default=0, metavar="REPS",
                     help="run the floor-misspecification simulation with REPS replicates per row, then exit")
+    ap.add_argument("--out-dir", default=None, metavar="DIR",
+                    help="where reports, JSON and figures go (default latekey/results; the auxiliary re-fits use "
+                         "latekey/auxiliary/sol61_extra/results)")
     a = ap.parse_args()
-    out_dir = os.path.join(HERE, "results")
+    out_dir = a.out_dir or os.path.join(HERE, "results")
+    os.makedirs(os.path.join(out_dir, "figs"), exist_ok=True)
     if a.floor_bias_sim:
         md = floor_bias_sim(a.floor_bias_sim, a.workers)
         p = os.path.join(out_dir, "shift_scale_floor_bias_sim.md")
@@ -805,7 +809,7 @@ def main():
         res.update(tag=suffix, source="raw runs " + ", ".join(os.path.basename(p) for p in a.runs),
                    n_incomplete_pairs_dropped={b.name: b.n_incomplete for b in banks})
     else:
-        path = a.results or os.path.join(out_dir, f"results__{a.tag}{'__dropinv' if a.drop_invalid else ''}.json")
+        path = a.results or os.path.join(HERE, "results", f"results__{a.tag}{'__dropinv' if a.drop_invalid else ''}.json")
         banks, raw = load_results_json(path)
         suffix = raw["tag"] + ("__dropinv" if raw["drop_invalid"] else "")
         om = {b.name: b.n_omitted for b in banks}
