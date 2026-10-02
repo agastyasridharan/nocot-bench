@@ -95,7 +95,7 @@ def main():
         ax.spines[sp].set_visible(False)
     ax.legend(loc="upper left", frameon=False, ncol=3, fontsize=8.5, bbox_to_anchor=(0, 1.02),
               handlelength=1.6, columnspacing=1.2)
-    ax.set_title("Unrelated Question Control", fontsize=12, color=INK, loc="left", pad=14)
+    ax.set_title("Unrelated Question Control", fontsize=12, color=INK, loc="center", pad=14)
     fig.tight_layout()
     out = os.path.join(LK, "results", "figs", "ood_probe")
     os.makedirs(os.path.dirname(out), exist_ok=True)
