@@ -1,0 +1,4 @@
+{"num_steps": 8, "mode": "full", "n_lo": null, "batch": 63, "padded_tokens": 32445, "real_tokens": 31332, "seconds": 2.471, "peak_gib": 13.705913543701172, "device": "cuda", "dtype": "torch.bfloat16", "time": 1790874173.5822968}
+{"num_steps": 8, "mode": "full", "n_lo": null, "batch": 57, "padded_tokens": 31863, "real_tokens": 30621, "seconds": 2.2053, "peak_gib": 13.705913543701172, "device": "cuda", "dtype": "torch.bfloat16", "time": 1790874175.8018541}
+{"num_steps": 32, "mode": "full", "n_lo": null, "batch": 63, "padded_tokens": 32445, "real_tokens": 31332, "seconds": 7.9923, "peak_gib": 13.705913543701172, "device": "cuda", "dtype": "torch.bfloat16", "time": 1790874183.8091438}
+{"num_steps": 32, "mode": "full", "n_lo": null, "batch": 57, "padded_tokens": 31863, "real_tokens": 30621, "seconds": 7.8567, "peak_gib": 13.705913543701172, "device": "cuda", "dtype": "torch.bfloat16", "time": 1790874191.680456}
